@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet add *)",
+      "Bash(where java *)",
+      "Bash(dotnet build *)",
+      "Bash(cat)",
+      "Bash(dotnet run *)"
+    ]
+  }
+}

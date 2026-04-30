@@ -1,0 +1,546 @@
+========================================================
+PJP COMPILER - EXTENSION IMPLEMENTATION GUIDE
+========================================================
+
+Two features covered:
+  1. FILE type + fopen + << operator
+  2. Arrays (fixed-size, any element type)
+
+Each feature requires changes in order:
+  Lexer -> Ast -> Parser -> TypeChecker -> CodeGen -> Interpreter
+
+========================================================
+PART 1: FILE TYPE
+========================================================
+
+Syntax you are implementing:
+  FILE f;
+  fopen f "soubor.txt";
+  f << 1 << 2.0 << "test";
+
+--------------------------------------------------------
+STEP 1.1 - Lexer.cs
+--------------------------------------------------------
+
+In enum TokenType add:
+  File,
+  Fopen,
+  LtLt,
+
+In NextToken() inside the word (keyword) switch add:
+  "file"  => TokenType.File,
+  "fopen" => TokenType.Fopen,
+
+In NextToken() inside the character switch add the << operator.
+The '<' case currently returns Lt. Change it to check next char:
+
+  '<' when Current == '<' => Advance(TokenType.LtLt, "<<", line),
+  '<'                     => new Token(TokenType.Lt, "<", line),
+
+NOTE: the "when Current == '<'" arm must come FIRST, before plain '<'.
+      The Advance() method consumes the second character and returns token.
+
+--------------------------------------------------------
+STEP 1.2 - Ast.cs
+--------------------------------------------------------
+
+In enum VarType add:
+  File
+
+Add two new statement records:
+
+  // fopen f "path";
+  public record FopenStmt(string VarName, string FileName, int Line) : Stmt(Line);
+
+  // f << expr << expr << expr;
+  public record FileWriteStmt(string VarName, List<Expr> Values, int Line) : Stmt(Line);
+
+--------------------------------------------------------
+STEP 1.3 - Parser.cs
+--------------------------------------------------------
+
+In method IsType() add File:
+  tt is TokenType.Int or ... or TokenType.File
+
+In method ParseType() switch add:
+  TokenType.File => VarType.File,
+
+In method ParseStatement() add two new arms BEFORE the expression-statement
+fallthrough at the bottom. Order matters - put these before "var expr = ParseExpr()".
+
+Arm 1 - fopen:
+  if (Check(TokenType.Fopen))
+  {
+      int line = Current.Line;
+      Consume();                                    // eat 'fopen'
+      string varName  = Expect(TokenType.Id).Text;
+      string fileName = Expect(TokenType.StrLit).Text;
+      Expect(TokenType.Semi);
+      return new FopenStmt(varName, fileName, line);
+  }
+
+Arm 2 - file write (f << expr << expr):
+  if (Check(TokenType.Id) && Peek().Type == TokenType.LtLt)
+  {
+      int line = Current.Line;
+      string varName = Consume().Text;              // ID
+      var values = new List<Expr>();
+      while (Match(TokenType.LtLt))
+          values.Add(ParseExpr());
+      Expect(TokenType.Semi);
+      return new FileWriteStmt(varName, values, line);
+  }
+
+WHY order matters: without checking LtLt peek, the parser would fall through
+to ParseExpr() and treat "f" as an expression statement. Peek() disambiguates.
+
+--------------------------------------------------------
+STEP 1.4 - TypeChecker.cs
+--------------------------------------------------------
+
+In CheckStmt() switch add:
+
+  case FopenStmt f:
+      if (!_vars.ContainsKey(f.VarName))
+          _errors.Add($"Line {f.Line}: undeclared variable '{f.VarName}'");
+      else if (_vars[f.VarName] != VarType.File)
+          _errors.Add($"Line {f.Line}: '{f.VarName}' is not a file variable");
+      break;
+
+  case FileWriteStmt fw:
+      if (!_vars.ContainsKey(fw.VarName))
+          _errors.Add($"Line {fw.Line}: undeclared variable '{fw.VarName}'");
+      else if (_vars[fw.VarName] != VarType.File)
+          _errors.Add($"Line {fw.Line}: '{fw.VarName}' is not a file variable");
+      foreach (var e in fw.Values)
+          InferType(e);                             // validate expressions
+      break;
+
+In DeclStmt case, the initial push is handled in CodeGen, not here.
+No other TypeChecker changes needed.
+
+--------------------------------------------------------
+STEP 1.5 - CodeGen.cs
+--------------------------------------------------------
+
+In GenStmt() switch add:
+
+  case DeclStmt d when d.VType == VarType.File:
+      // put this BEFORE the generic DeclStmt case, or add File arm inside it:
+      foreach (var name in d.Names)
+      {
+          Emit("push S \"\"");                      // empty string = closed file
+          Emit($"save {name}");
+      }
+      break;
+
+  case FopenStmt f:
+      Emit($"fopen {f.VarName} \"{f.FileName}\"");
+      break;
+
+  case FileWriteStmt fw:
+      foreach (var v in fw.Values)
+          GenExpr(v);
+      Emit($"fwrite {fw.VarName} {fw.Values.Count}");
+      break;
+
+NOTE: You invent the instructions "fopen" and "fwrite". They do not exist yet.
+      You define their behavior in Interpreter.cs in the next step.
+
+--------------------------------------------------------
+STEP 1.6 - Interpreter.cs
+--------------------------------------------------------
+
+Add field to class:
+  private readonly Dictionary<string, StreamWriter> _files = new();
+
+In Execute() switch add:
+
+  case "fopen":
+  {
+      string varName = parts[1];
+      string path    = ParseString(parts[2]);
+      _files[varName]  = new StreamWriter(path, append: false);
+      _vars[varName]   = path;                     // store path as var value
+      break;
+  }
+
+  case "fwrite":
+  {
+      string varName = parts[1];
+      int n          = int.Parse(parts[2]);
+      var vals       = new object[n];
+      for (int i = n - 1; i >= 0; i--)
+          vals[i] = _stack.Pop();                  // pop in reverse
+      if (!_files.TryGetValue(varName, out var sw))
+          throw new Exception($"File '{varName}' is not open");
+      foreach (var v in vals)
+          sw.Write(FormatValue(v));
+      break;
+  }
+
+At the END of the Run() method, after the while loop, close all open files:
+  foreach (var sw in _files.Values)
+      sw.Close();
+  _files.Clear();
+
+--------------------------------------------------------
+TEST - FILE feature
+--------------------------------------------------------
+
+Write this to test.pjp and compile + run:
+
+  FILE f;
+  fopen f "output.txt";
+  int x;
+  x = 42;
+  f << x << " hello " << 3.14;
+
+Expected: file output.txt created, content: 42 hello 3.14
+
+
+
+========================================================
+PART 2: ARRAYS
+========================================================
+
+Syntax you are implementing:
+  int[10] arr;            // declaration, size must be int literal
+  arr[0] = 5;             // indexed assignment
+  write arr[0];           // indexed read
+
+--------------------------------------------------------
+STEP 2.1 - Lexer.cs
+--------------------------------------------------------
+
+In enum TokenType add:
+  LBracket,
+  RBracket,
+
+In NextToken() character switch add:
+  '[' => new Token(TokenType.LBracket, "[", line),
+  ']' => new Token(TokenType.RBracket, "]", line),
+
+That is all for Lexer.
+
+--------------------------------------------------------
+STEP 2.2 - Ast.cs
+--------------------------------------------------------
+
+Add new statement record for array declaration:
+  public record ArrayDeclStmt(VarType ElemType, int Size, string Name, int Line) : Stmt(Line);
+
+Add new expression records for array access and array assign:
+  public record ArrayAccessExpr(string Name, Expr Index, int Line) : Expr(Line);
+  public record ArrayAssignExpr(string Name, Expr Index, Expr Value, int Line) : Expr(Line);
+
+No change to VarType enum - arrays are not a separate type.
+The element type is stored in ArrayDeclStmt.ElemType.
+
+You will track arrays separately in TypeChecker using a second dictionary.
+
+--------------------------------------------------------
+STEP 2.3 - Parser.cs
+--------------------------------------------------------
+
+Add a second dictionary in TypeChecker (explained in 2.4) so Parser does NOT
+need to know element types. Parser only produces AST nodes.
+
+In ParseStatement() add array declaration BEFORE the generic type declaration arm.
+The distinguishing token is: Type '[' IntLit ']' ID ';'
+Use two-level peek to detect it:
+
+  if (IsType(Current.Type) && Peek().Type == TokenType.LBracket)
+  {
+      int line     = Current.Line;
+      VarType elem = ParseType();
+      Expect(TokenType.LBracket);
+      int size     = int.Parse(Expect(TokenType.IntLit).Text);
+      Expect(TokenType.RBracket);
+      string name  = Expect(TokenType.Id).Text;
+      Expect(TokenType.Semi);
+      return new ArrayDeclStmt(elem, size, name, line);
+  }
+
+In ParsePrimary() add array access. It looks like an identifier followed by '['.
+Add BEFORE the plain Id case:
+
+  if (Check(TokenType.Id) && Peek().Type == TokenType.LBracket)
+  {
+      string name = Consume().Text;
+      Consume();                                    // eat '['
+      var idx = ParseExpr();
+      Expect(TokenType.RBracket);
+      return new ArrayAccessExpr(name, idx, line);
+  }
+
+In ParseAssign() add array assignment. It looks like: ID '[' expr ']' '=' expr
+Add BEFORE the plain "ID '=' expr" arm:
+
+  if (Check(TokenType.Id) && Peek().Type == TokenType.LBracket)
+  {
+      int line    = Current.Line;
+      string name = Consume().Text;
+      Consume();                                    // eat '['
+      var idx     = ParseExpr();
+      Expect(TokenType.RBracket);
+      Expect(TokenType.Eq);
+      var val     = ParseAssign();
+      return new ArrayAssignExpr(name, idx, val, line);
+  }
+
+WARNING: both ParsePrimary() and ParseAssign() check "Id followed by [".
+         ParseAssign() runs first (higher in call chain) and checks for '='
+         after the ']'. If '=' is NOT present, control falls to ParsePrimary.
+         So the ParseAssign arm must peek further to confirm '=' exists:
+
+  if (Check(TokenType.Id) && Peek().Type == TokenType.LBracket)
+  {
+      // lookahead: find matching ']' then check for '='
+      // simple approach: only enter this arm if we can confirm it's assignment
+      // save position, try parse, backtrack on failure
+      // OR: scan ahead manually:
+      int saved = _pos;
+      string name = Consume().Text;
+      Consume();                                    // '['
+      // skip expression tokens until ']'
+      int depth = 1;
+      while (depth > 0 && !Check(TokenType.Eof))
+      {
+          if (Check(TokenType.LBracket)) depth++;
+          else if (Check(TokenType.RBracket)) depth--;
+          Consume();
+      }
+      bool isAssign = Check(TokenType.Eq);
+      _pos = saved;                                 // backtrack
+      if (isAssign)
+      {
+          // now parse for real
+          name = Consume().Text;
+          Consume();                                // '['
+          var idx  = ParseExpr();
+          Expect(TokenType.RBracket);
+          Expect(TokenType.Eq);
+          var val  = ParseAssign();
+          return new ArrayAssignExpr(name, idx, val, line);
+      }
+      // fall through to ParseOr() -> eventually ParsePrimary() handles ArrayAccessExpr
+  }
+
+--------------------------------------------------------
+STEP 2.4 - TypeChecker.cs
+--------------------------------------------------------
+
+Add second dictionary to class:
+  private readonly Dictionary<string, (VarType ElemType, int Size)> _arrays = new();
+
+Expose it as property:
+  public Dictionary<string, (VarType ElemType, int Size)> Arrays => _arrays;
+
+In CheckStmt() add:
+
+  case ArrayDeclStmt a:
+      if (_vars.ContainsKey(a.Name) || _arrays.ContainsKey(a.Name))
+          _errors.Add($"Line {a.Line}: variable '{a.Name}' already declared");
+      else
+          _arrays[a.Name] = (a.ElemType, a.Size);
+      break;
+
+In InferType() add:
+
+  case ArrayAccessExpr a:
+      if (!_arrays.TryGetValue(a.Name, out var ai))
+      {
+          _errors.Add($"Line {a.Line}: '{a.Name}' is not an array");
+          return null;
+      }
+      var idxType = InferType(a.Index);
+      if (idxType != null && idxType != VarType.Int)
+          _errors.Add($"Line {a.Line}: array index must be int");
+      return ai.ElemType;
+
+  case ArrayAssignExpr a:
+      if (!_arrays.TryGetValue(a.Name, out var aa))
+      {
+          _errors.Add($"Line {a.Line}: '{a.Name}' is not an array");
+          return null;
+      }
+      InferType(a.Index);
+      var valType = InferType(a.Value);
+      if (valType != null && valType != aa.ElemType)
+      {
+          // allow int->float promotion
+          if (!(aa.ElemType == VarType.Float && valType == VarType.Int))
+              _errors.Add($"Line {a.Line}: cannot store {valType} in {aa.ElemType}[]");
+      }
+      return aa.ElemType;
+
+--------------------------------------------------------
+STEP 2.5 - CodeGen.cs
+--------------------------------------------------------
+
+CodeGen needs access to the TypeChecker's Arrays dict (already has _tc field).
+
+In GenStmt() add:
+
+  case ArrayDeclStmt a:
+  {
+      // emit size-many default values and store as array via new instruction
+      Emit($"anew {a.Name} {a.Size} {TypeCode(a.ElemType)}");
+      break;
+  }
+
+In GenExpr() add:
+
+  case ArrayAccessExpr a:
+      GenExpr(a.Index);
+      Emit($"aload {a.Name}");
+      break;
+
+  case ArrayAssignExpr a:
+  {
+      var (elemType, _) = _tc.Arrays[a.Name];
+      var valType = _tc.InferType(a.Value)!.Value;
+      GenExpr(a.Index);
+      GenExpr(a.Value);
+      if (valType == VarType.Int && elemType == VarType.Float)
+          Emit("itof");
+      Emit($"astore {a.Name}");
+      Emit($"aload_top {a.Name}");                 // push stored value (for expr result)
+      break;
+  }
+
+NOTE: "anew", "aload", "astore", "aload_top" are invented instructions.
+      Define them in Interpreter next.
+      If you do not need array assignment as expression (right-hand value),
+      skip the "aload_top" instruction and simplify.
+
+--------------------------------------------------------
+STEP 2.6 - Interpreter.cs
+--------------------------------------------------------
+
+Arrays live in _vars as object[]. The type is already enforced by TypeChecker/CodeGen.
+
+In Execute() switch add:
+
+  case "anew":
+  {
+      // anew varName size typeCode
+      string name = parts[1];
+      int size    = int.Parse(parts[2]);
+      string tc   = parts[3];
+      object def  = tc switch
+      {
+          "I" => (object)0,
+          "F" => 0.0,
+          "B" => false,
+          "S" => "",
+          _   => 0
+      };
+      var arr = new object[size];
+      Array.Fill(arr, def);
+      _vars[name] = arr;
+      break;
+  }
+
+  case "aload":
+  {
+      // stack: [..., index]
+      // result: [..., arr[index]]
+      int idx    = (int)_stack.Pop();
+      var arr    = (object[])_vars[parts[1]];
+      if (idx < 0 || idx >= arr.Length)
+          throw new Exception($"Array '{parts[1]}' index {idx} out of bounds (size {arr.Length})");
+      _stack.Push(arr[idx]);
+      break;
+  }
+
+  case "astore":
+  {
+      // stack: [..., index, value]
+      // result: stack unchanged (value consumed)
+      var val = _stack.Pop();
+      int idx = (int)_stack.Pop();
+      var arr = (object[])_vars[parts[1]];
+      if (idx < 0 || idx >= arr.Length)
+          throw new Exception($"Array '{parts[1]}' index {idx} out of bounds (size {arr.Length})");
+      arr[idx] = val;
+      break;
+  }
+
+  case "aload_top":
+  {
+      // push arr[top-of-index] WITHOUT consuming index from stack
+      // simplest: after astore the index is gone, so store last index separately
+      // ALTERNATIVE: change astore to leave value on stack (simpler)
+      // See note below.
+      break;
+  }
+
+SIMPLER ALTERNATIVE for assignment-as-expression:
+  Change astore to NOT pop value, only pop index:
+    var val = _stack.Peek();                        // peek, not pop
+    int idx = ...pop index separately...
+  Then remove aload_top entirely.
+  But stack discipline becomes non-obvious. Easier to just not support
+  array assignment as expression (arr[i] = v; is statement only).
+  Then remove ArrayAssignExpr, use ArrayAssignStmt instead.
+
+--------------------------------------------------------
+TEST - ARRAYS feature
+--------------------------------------------------------
+
+Write this to test.pjp and compile + run:
+
+  int[5] arr;
+  int i;
+  i = 0;
+  while (i < 5) {
+      arr[i] = i * i;
+      i = i + 1;
+  }
+  i = 0;
+  while (i < 5) {
+      write arr[i];
+      i = i + 1;
+  }
+
+Expected output:
+  0
+  1
+  4
+  9
+  16
+
+
+
+========================================================
+GENERAL TIPS FOR DEBUGGING YOUR IMPLEMENTATION
+========================================================
+
+1. Test each phase in isolation.
+   Add a "--dump-tokens" flag that prints tokens and exits.
+   Add a "--dump-ast" flag that prints AST nodes and exits.
+   Add a "--dump-code" flag that prints generated instructions and exits.
+   This way you find bugs in one phase without noise from later phases.
+
+2. When parser panics on unexpected token, print Current.Type and Current.Text
+   to see exactly what the parser received at the failure point.
+
+3. Generated instruction files are plain text. Open them and read manually
+   before running - verify push/pop balance and label numbers.
+
+4. Stack imbalance is the most common interpreter bug.
+   Every path through GenExpr() must leave exactly 1 value on stack.
+   Every path through GenStmt() must leave stack at same depth as before.
+
+5. For arrays: _vars stores object. A cast (object[])_vars[name] will throw
+   ClassCastException if you accidentally stored a non-array. Check anew
+   is called before aload/astore.
+
+6. Labels are global integers. _labelCounter in CodeGen must never reset
+   between statements. Keep it as a class field (already done in current code).
+
+========================================================
+END OF GUIDE
+========================================================

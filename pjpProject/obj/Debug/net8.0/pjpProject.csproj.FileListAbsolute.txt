@@ -1,0 +1,17 @@
+D:\RiderProjects\BachelorProjectApi\pjpProject\pjpProject\obj\Debug\net8.0\pjpProject.csproj.AssemblyReference.cache
+D:\RiderProjects\BachelorProjectApi\pjpProject\pjpProject\obj\Debug\net8.0\pjpProject.GeneratedMSBuildEditorConfig.editorconfig
+D:\RiderProjects\BachelorProjectApi\pjpProject\pjpProject\obj\Debug\net8.0\pjpProject.AssemblyInfoInputs.cache
+D:\RiderProjects\BachelorProjectApi\pjpProject\pjpProject\obj\Debug\net8.0\pjpProject.AssemblyInfo.cs
+D:\RiderProjects\BachelorProjectApi\pjpProject\pjpProject\obj\Debug\net8.0\pjpProject.csproj.CoreCompileInputs.cache
+D:\RiderProjects\BachelorProjectApi\pjpProject\pjpProject\bin\Debug\net8.0\pjpProject.exe
+D:\RiderProjects\BachelorProjectApi\pjpProject\pjpProject\bin\Debug\net8.0\pjpProject.deps.json
+D:\RiderProjects\BachelorProjectApi\pjpProject\pjpProject\bin\Debug\net8.0\pjpProject.runtimeconfig.json
+D:\RiderProjects\BachelorProjectApi\pjpProject\pjpProject\bin\Debug\net8.0\pjpProject.dll
+D:\RiderProjects\BachelorProjectApi\pjpProject\pjpProject\bin\Debug\net8.0\pjpProject.pdb
+D:\RiderProjects\BachelorProjectApi\pjpProject\pjpProject\bin\Debug\net8.0\Antlr4.Runtime.Standard.dll
+D:\RiderProjects\BachelorProjectApi\pjpProject\pjpProject\obj\Debug\net8.0\pjpProject.csproj.Up2Date
+D:\RiderProjects\BachelorProjectApi\pjpProject\pjpProject\obj\Debug\net8.0\pjpProject.dll
+D:\RiderProjects\BachelorProjectApi\pjpProject\pjpProject\obj\Debug\net8.0\refint\pjpProject.dll
+D:\RiderProjects\BachelorProjectApi\pjpProject\pjpProject\obj\Debug\net8.0\pjpProject.pdb
+D:\RiderProjects\BachelorProjectApi\pjpProject\pjpProject\obj\Debug\net8.0\pjpProject.genruntimeconfig.cache
+D:\RiderProjects\BachelorProjectApi\pjpProject\pjpProject\obj\Debug\net8.0\ref\pjpProject.dll
