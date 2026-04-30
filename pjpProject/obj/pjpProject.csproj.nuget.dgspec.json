@@ -53,6 +53,11 @@
             "Antlr4.Runtime.Standard": {
               "target": "Package",
               "version": "[4.13.1, )"
+            },
+            "Antlr4BuildTasks": {
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[12.8.3, )"
             }
           },
           "imports": [

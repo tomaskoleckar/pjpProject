@@ -5,6 +5,11 @@ program : statement* EOF ;
 statement
     : ';'                                                   # emptyStmt
     | type ID (',' ID)* ';'                                 # declStmt
+    | type '[' INT_LIT ']' ID ';'                           # arrayDeclStmt
+    | FILE ID (',' ID)* ';'                                 # fileDeclStmt
+    | FOPEN ID STR_LIT ';'                                  # fopenStmt
+    | ID ('<<' expr)+ ';'                                   # fileWriteStmt
+    | ID '[' expr ']' '=' expr ';'                          # arrayAssignStmt
     | expr ';'                                              # exprStmt
     | READ ID (',' ID)* ';'                                 # readStmt
     | WRITE expr (',' expr)* ';'                            # writeStmt
@@ -16,13 +21,14 @@ statement
 type : INT | FLOAT | BOOL | STRING ;
 
 expr
-    : ID '=' expr                                           # assignExpr
-    | expr '||' expr                                        # orExpr
-    | expr '&&' expr                                        # andExpr
-    | expr ('==' | '!=') expr                               # eqExpr
-    | expr ('<' | '>') expr                                 # relExpr
-    | expr ('+' | '-' | '.') expr                           # addExpr
+    : expr '[' expr ']'                                     # indexExpr
     | expr ('*' | '/' | '%') expr                           # mulExpr
+    | expr ('+' | '-' | '.') expr                           # addExpr
+    | expr ('<' | '>') expr                                 # relExpr
+    | expr ('==' | '!=') expr                               # eqExpr
+    | expr '&&' expr                                        # andExpr
+    | expr '||' expr                                        # orExpr
+    | <assoc=right> expr '=' expr                           # assignExpr
     | '!' expr                                              # notExpr
     | '-' expr                                              # unaryMinusExpr
     | '(' expr ')'                                          # parenExpr
@@ -38,11 +44,13 @@ INT    : 'int' ;
 FLOAT  : 'float' ;
 BOOL   : 'bool' ;
 STRING : 'string' ;
+FILE   : 'file' ;
 READ   : 'read' ;
 WRITE  : 'write' ;
 IF     : 'if' ;
 ELSE   : 'else' ;
 WHILE  : 'while' ;
+FOPEN  : 'fopen' ;
 
 BOOL_LIT : 'true' | 'false' ;
 

@@ -1,0 +1,580 @@
+========================================================
+PJP COMPILER - STEP BY STEP LOGIC
+========================================================
+
+Overview: source code (.pjp) goes through 5 phases before output appears.
+
+  Source text
+    -> [1. Lexer]       -> List<Token>
+    -> [2. Parser]      -> List<Stmt>  (AST)
+    -> [3. TypeChecker] -> errors or OK
+    -> [4. CodeGen]     -> string of stack-machine instructions (.code file)
+    -> [5. Interpreter] -> program output
+
+Program.cs wires these phases together.
+If any phase produces errors, execution stops and errors print to stderr.
+
+========================================================
+PHASE 0: ENTRY POINT  (Program.cs)
+========================================================
+
+Two modes depending on args:
+
+  Mode A - compile:
+    pjpProject <source.pjp>
+    Reads source file -> runs phases 1-4 -> writes .code file.
+
+  Mode B - run pre-compiled:
+    pjpProject --run <file.code>
+    Reads .code file -> runs phase 5 only.
+
+Compile mode steps in order:
+  1. Read source text from file
+  2. Lexer.Tokenize()  -> tokens
+  3. Parser.Parse()    -> stmts   (stop if parser.Errors not empty)
+  4. TypeChecker.Check(stmts)     (stop if tc.Errors not empty)
+  5. CodeGen.Generate(stmts)      -> instruction string
+  6. Write instruction string to .code file (same name as .pjp, different extension)
+
+========================================================
+PHASE 1: LEXER  (Lexer.cs)
+========================================================
+
+Goal: turn raw text into a flat list of tokens.
+A Token is: (TokenType, Text, Line).
+
+Main method: Tokenize()
+  - Loop: skip whitespace+comments, then call NextToken(), until EOF.
+  - Returns List<Token> ending with an Eof token.
+
+SkipWhitespaceAndComments():
+  - Skips spaces, tabs, carriage returns.
+  - On newline: increments _line counter.
+  - On "//": skips everything until end of line (single-line comments only).
+
+NextToken() - recognizes in this order:
+
+  1. String literal  - starts with '"'
+       Reads chars until closing '"'. Handles \" escape inside.
+       Returns TokenType.StrLit with the content (quotes stripped).
+
+  2. Number          - starts with digit
+       Reads digits. If followed by '.' and more digits: FloatLit.
+       Otherwise: IntLit.
+
+  3. Float starting with dot  - '.' followed by digit
+       Example: .5  ->  FloatLit "0.5" (actually stored as ".5")
+
+  4. Identifier / keyword  - starts with letter
+       Reads letters+digits. Checks against keyword table:
+         int float bool string  -> type tokens
+         read write if else while  -> statement keyword tokens
+         true false  -> BoolLit
+         fopen  -> Fopen
+       Anything not in the table -> Id (identifier)
+
+  5. Operators and punctuation  - single char dispatch:
+       +  -  *  /  %  .  >  ->  simple single-char tokens
+       =  checks next char: if '=' -> EqEq ("=="), else Eq ("=")
+       !  checks next char: if '=' -> NotEq ("!="), else Bang ("!")
+       &  checks next char: if '&' -> AndAnd ("&&")
+       |  checks next char: if '|' -> OrOr ("||")
+       (  )  {  }  [  ]  ,  ;  ->  punctuation tokens
+       <  ->  Lt ("<")  [no << support yet, EXTENSIONS.txt covers that]
+       Unknown char -> throws exception with line number.
+
+Advance(tt, text, line):
+  Helper - consumes one extra character and returns a two-char token.
+  Used for ==  !=  &&  ||
+
+========================================================
+PHASE 2: PARSER  (Parser.cs)
+========================================================
+
+Goal: turn the flat token list into an Abstract Syntax Tree (AST).
+The AST is List<Stmt>. Each Stmt may contain Expr nodes recursively.
+
+All AST node types are defined in Ast.cs (see next section).
+
+Key helpers:
+  Current     - token at current position (does not advance)
+  Peek(n)     - token n positions ahead (does not advance)
+  Consume()   - return current token and advance
+  Expect(tt)  - like Consume but adds error if type doesn't match
+  Check(tt)   - true if Current.Type == tt
+  Match(tt)   - if Check(tt): Consume and return true, else false
+
+Error recovery (Synchronize):
+  When a statement throws, skip tokens until ';' or '}' or EOF.
+  This lets parsing continue and collect more errors in one pass.
+
+--- ParseStatement() ---
+
+Tries each statement type in order:
+
+  1. Empty statement
+       If ';' -> return EmptyStmt, consume the semicolon.
+
+  2. Variable declaration
+       If current token is a type keyword (int/float/bool/string):
+         - Parse the type.
+         - If '[' follows: consume it and ']', map to array type (IntArray etc.)
+         - Parse comma-separated list of identifiers.
+         - Expect ';'
+         - Return DeclStmt(type, names)
+
+  3. read statement
+       Consume 'read', parse comma-separated identifier list, expect ';'.
+       Return ReadStmt(names).
+
+  4. write statement
+       Consume 'write', parse comma-separated expression list, expect ';'.
+       Return WriteStmt(exprs).
+
+  5. Block  { stmts }
+       Consume '{', loop ParseStatement() until '}' or EOF, consume '}'.
+       Return BlockStmt(stmts).
+
+  6. if statement
+       Consume 'if', expect '(', parse condition expr, expect ')'.
+       Parse then-statement.
+       If 'else' follows: consume and parse else-statement.
+       Return IfStmt(cond, then, else?).
+
+  7. while statement
+       Consume 'while', expect '(', parse condition expr, expect ')'.
+       Parse body statement.
+       Return WhileStmt(cond, body).
+
+  8. Expression statement (fallthrough)
+       Parse an expression, expect ';'.
+       Return ExprStmt(expr).
+       Used for: assignments (x=5;), chained assignments (i=j=k=55;).
+
+--- Expression parsing: Pratt / precedence climbing ---
+
+Call chain (lowest to highest precedence):
+
+  ParseExpr()
+    -> ParseAssign()         right-associative:  x = expr
+    -> ParseOr()             left:  a || b
+    -> ParseAnd()            left:  a && b
+    -> ParseEq()             left:  a == b   a != b
+    -> ParseRel()            left:  a < b    a > b
+    -> ParseAdd()            left:  a + b    a - b    a . b
+    -> ParseMul()            left:  a * b    a / b    a % b
+    -> ParseUnary()          right: -a   !a
+    -> ParsePrimary()        atoms
+
+ParseAssign():
+  Peeks ahead: if current=Id and next='=' -> assignment.
+  Consumes name, consumes '=', recursively parses right side (right-assoc).
+  Returns AssignExpr(name, value).
+  Otherwise falls through to ParseOr().
+
+ParsePrimary():
+  Handles:
+    ( expr )      -> parenthesized expression
+    IntLit        -> IntLitExpr
+    FloatLit      -> FloatLitExpr
+    BoolLit       -> BoolLitExpr
+    StrLit        -> StrLitExpr
+    Id            -> starts as IdExpr, then loops:
+                     if '[' follows -> IndexExpr(target, index)  (array access)
+                     if '(' follows -> CallExpr(name, args)       (function call)
+                     else break
+  Unknown token -> throws exception.
+
+========================================================
+AST NODE TYPES  (Ast.cs)
+========================================================
+
+--- VarType enum ---
+  Int, Float, Bool, String,
+  IntArray, FloatArray, BoolArray, StringArray
+
+--- Statement nodes (all extend Stmt, carry Line number) ---
+  EmptyStmt                            - lone semicolon
+  DeclStmt(VType, Names, Line)         - variable declaration
+  ExprStmt(Expr, Line)                 - expression used as statement
+  ReadStmt(Names, Line)                - read statement
+  WriteStmt(Exprs, Line)               - write statement
+  BlockStmt(Stmts, Line)               - { ... }
+  IfStmt(Cond, Then, Else?, Line)      - if/else
+  WhileStmt(Cond, Body, Line)          - while loop
+
+--- Expression nodes (all extend Expr, carry Line number) ---
+  IntLitExpr(Value)                    - integer literal
+  FloatLitExpr(Value)                  - float literal
+  BoolLitExpr(Value)                   - true / false
+  StrLitExpr(Value)                    - string literal
+  IdExpr(Name)                         - variable read
+  AssignExpr(Name, Value)              - variable assignment (returns value)
+  BinopExpr(Op, Left, Right)           - binary operation
+  UnopExpr(Op, Operand)                - unary operation
+  IndexExpr(Target, Index)             - array index access  arr[i]
+  CallExpr(Name, Args)                 - function call  fopen(...)
+
+========================================================
+PHASE 3: TYPE CHECKER  (TypeChecker.cs)
+========================================================
+
+Goal: verify types are correct. Collect all errors (does not stop at first).
+
+State:
+  _vars: Dictionary<string, VarType>  - maps variable name -> declared type
+  _errors: List<string>               - accumulated error messages
+
+Entry: Check(stmts) -> calls CheckStmt on each statement.
+
+--- CheckStmt(s) ---
+
+  EmptyStmt       - nothing to check.
+
+  DeclStmt        - for each name: error if already declared, else add to _vars.
+
+  ExprStmt        - call InferType on the inner expression (side effect: adds errors).
+
+  ReadStmt        - for each name: error if not in _vars.
+
+  WriteStmt       - call InferType on each expression.
+
+  BlockStmt       - recursively CheckStmt on each inner statement.
+
+  IfStmt          - InferType(cond) must be Bool. CheckStmt(then). CheckStmt(else?) if present.
+
+  WhileStmt       - InferType(cond) must be Bool. CheckStmt(body).
+
+--- InferType(e) -> VarType? ---
+
+Returns the type of an expression, or null if unknown/error.
+
+  IntLitExpr      -> Int
+  FloatLitExpr    -> Float
+  BoolLitExpr     -> Bool
+  StrLitExpr      -> String
+
+  IdExpr          -> look up in _vars. Error if not found.
+
+  AssignExpr      -> look up lhs type. InferType(rhs). Check Compatible(lhs, rhs).
+                     Int<-Float is error. Float<-Int is allowed (auto cast).
+                     Returns lhs type (assignment expression has value of lhs type).
+
+  UnopExpr "-"    -> operand must be Int or Float. Returns same type.
+  UnopExpr "!"    -> operand must be Bool. Returns Bool.
+
+  IndexExpr       -> InferType(target) must be an array type.
+                     InferType(index) must be Int.
+                     Returns element type (IntArray->Int, FloatArray->Float, etc.)
+
+  CallExpr        -> currently only "fopen" recognized.
+                     Must have exactly 2 String arguments. Returns Int (file handle).
+                     Any other name -> error "unknown function".
+
+  BinopExpr       -> delegates to CheckBinop.
+
+--- CheckBinop(b) ---
+
+  + - * /    both operands must be numeric (Int or Float).
+               Int+Int->Int, any Float involved->Float.
+  %          both must be Int. Returns Int.
+  .          both must be String. Returns String.
+  < >        both must be numeric. Returns Bool.
+  == !=      both must be same type (numeric types can mix). Returns Bool.
+  && ||      both must be Bool. Returns Bool.
+
+--- Compatible(target, source) ---
+
+  Same type     -> compatible.
+  Float <- Int  -> compatible, sets needsCast=true (used by CodeGen).
+  Anything else -> not compatible.
+
+========================================================
+PHASE 4: CODE GENERATOR  (CodeGen.cs)
+========================================================
+
+Goal: walk the AST and emit stack-machine instructions as text.
+Output is a multiline string; each line is one instruction.
+
+State:
+  _tc: TypeChecker reference (used to look up variable types during code gen)
+  _sb: StringBuilder accumulating emitted instructions
+  _labelCounter: integer, incremented each time a new label is needed.
+
+Emit(instr): appends a line to _sb.
+NewLabel(): returns _labelCounter++ (unique label number).
+
+--- GenStmt(s) ---
+
+  EmptyStmt       - nothing emitted.
+
+  DeclStmt        - for each variable name: push default value, then save.
+                    Defaults: Int->0, Float->0.0, Bool->false, String->"".
+                    Array types: currently fall through to no instruction (not fully implemented).
+
+  ExprStmt        - GenExpr(expr), then emit "pop" to discard the expression value.
+                    (Assignment expressions push their result; statements discard it.)
+
+  ReadStmt        - for each name:
+                    emit "read <TypeCode>"  (reads one line of stdin, parses it)
+                    emit "save <name>"
+
+  WriteStmt       - GenExpr for each expression (each pushes one value).
+                    emit "print <count>"  (pops count values, prints them, adds newline).
+
+  BlockStmt       - GenStmt on each inner statement in order.
+
+  IfStmt:
+                    elseLabel = NewLabel()
+                    endLabel  = NewLabel()
+                    GenExpr(cond)          // pushes bool
+                    emit "fjmp elseLabel"  // pop bool; if false jump to elseLabel
+                    GenStmt(then)
+                    emit "jmp endLabel"    // skip else
+                    emit "label elseLabel"
+                    GenStmt(else) if present
+                    emit "label endLabel"
+
+  WhileStmt:
+                    startLabel = NewLabel()
+                    endLabel   = NewLabel()
+                    emit "label startLabel"
+                    GenExpr(cond)
+                    emit "fjmp endLabel"   // exit loop if condition false
+                    GenStmt(body)
+                    emit "jmp startLabel"  // loop back
+                    emit "label endLabel"
+
+--- GenExpr(e) ---
+
+  IntLitExpr      -> emit "push I <value>"
+  FloatLitExpr    -> emit "push F <value>"  (InvariantCulture for '.' decimal)
+  BoolLitExpr     -> emit "push B true" or "push B false"
+  StrLitExpr      -> emit "push S \"<value>\""
+
+  IdExpr          -> emit "load <name>"
+
+  AssignExpr:
+                    GenExpr(value)           // push rhs value
+                    if rhs=Int and lhs=Float: emit "itof"   // promote int to float
+                    emit "save <name>"       // pop into variable
+                    emit "load <name>"       // push it back (assignment has a value)
+                    NOTE: ExprStmt wrapping an assignment will then emit "pop".
+
+  UnopExpr "-"    -> GenExpr(operand), emit "uminus I" or "uminus F"
+  UnopExpr "!"    -> GenExpr(operand), emit "not"
+
+  BinopExpr       -> delegates to GenBinop.
+
+--- GenBinop(b) ---
+
+  Determine if float promotion is needed:
+    If either operand is Float (for arithmetic/relational ops):
+      arithType = Float
+      set needCastL or needCastR flags.
+
+  Emit left operand.  If needCastL: emit "itof".
+  Emit right operand. If needCastR: emit "itof".
+
+  Emit operation:
+    +      "add I" or "add F"
+    -      "sub I" or "sub F"
+    *      "mul I" or "mul F"
+    /      "div I" or "div F"
+    %      "mod"               (always int)
+    .      "concat"            (always string)
+    <      "lt I" or "lt F"
+    >      "gt I" or "gt F"
+    ==     "eq I" / "eq F" / "eq S"
+    !=     "eq ..." then "not"
+    &&     "and"
+    ||     "or"
+
+--- TypeCode(vt) ---
+
+  Maps VarType to single-character type code used in instructions:
+    Int    -> "I"
+    Float  -> "F"
+    Bool   -> "B"
+    String -> "S"
+    other  -> "I"  (fallback)
+
+========================================================
+PHASE 5: INTERPRETER  (Interpreter.cs)
+========================================================
+
+Goal: execute the stack-machine instruction file.
+This is a simple stack-based virtual machine.
+
+State:
+  _stack: Stack<object>              - the operand stack
+  _vars: Dictionary<string, object>  - runtime variable storage
+  _instructions: List<string>        - all non-empty instruction lines
+  _labels: Dictionary<int, int>      - label number -> instruction index
+  _ip: int                           - instruction pointer
+
+--- Run(code, input, output) ---
+
+  1. Split code by newline, strip empty lines -> _instructions.
+  2. First pass: scan for "label N" instructions, build _labels map.
+  3. Execute loop: while _ip < count, call Execute(_instructions[_ip]), _ip++.
+     (jmp/fjmp can change _ip inside Execute; the _ip++ after still happens,
+      so jmp sets _ip to label index, then +1 lands on instruction after label.)
+
+--- Execute(instr) - one instruction ---
+
+Tokenizes the instruction line (space-separated, quoted strings preserved).
+Dispatches on parts[0]:
+
+  push I/F/B/S <value>
+    Parse value by type code, push onto stack.
+    S: value is a quoted string, ParseString() strips the quotes.
+
+  pop
+    Discard top of stack.
+
+  load <name>
+    Push _vars[name] onto stack. Error if not initialized.
+
+  save <name>
+    Pop top of stack into _vars[name].
+
+  label
+    No-op at execution time (already processed in first pass).
+
+  jmp <labelNum>
+    Set _ip to _labels[labelNum].
+    (Run loop does _ip++ after, so execution continues at instruction after label.)
+
+  fjmp <labelNum>
+    Pop bool from stack. If false: set _ip to _labels[labelNum].
+    If true: do nothing (fall through to next instruction).
+
+  add/sub/mul/div <I|F>
+    Pop b, pop a. Compute a op b. Push result.
+    I = integer arithmetic. F = floating point (via ToFloat helper).
+
+  mod
+    Pop b (int), pop a (int). Push a % b.
+
+  uminus <I|F>
+    Pop value, push negated value.
+
+  concat
+    Pop b (string), pop a (string). Push a + b.
+
+  and
+    Pop b (bool), pop a (bool). Push a && b.
+
+  or
+    Pop b (bool), pop a (bool). Push a || b.
+
+  not
+    Pop bool, push negated bool.
+
+  lt <I|F>
+    Pop b, pop a. Push a < b (bool).
+
+  gt <I|F>
+    Pop b, pop a. Push a > b (bool).
+
+  eq <I|F|S>
+    Pop b, pop a. Push a == b (bool). Type determines how comparison works.
+
+  itof
+    Pop int, push it as double.
+
+  print <count>
+    Pop <count> values in reverse order (so first pushed = first printed).
+    Call FormatValue on each, write to output.
+    Write newline at end.
+
+  read <I|F|B|S>
+    Read one line from input.
+    Parse it according to type code:
+      I -> int.Parse
+      F -> double.Parse (InvariantCulture)
+      B -> true if line is "true", false otherwise
+      S -> raw line string
+    Push parsed value onto stack.
+
+--- FormatValue(v) ---
+
+  bool   -> "true" or "false"
+  double -> if whole number (no fractional part): "N.0" format (e.g. 1.0, 10.0)
+             otherwise: standard decimal string with InvariantCulture
+  other  -> v.ToString()
+
+--- Tokenize(line) ---
+
+  Splits an instruction line into parts, preserving quoted strings as one token.
+  Example:  push S "hello world"  ->  ["push", "S", "\"hello world\""]
+
+--- ParseString(raw) ---
+
+  Strips surrounding double quotes from a string token.
+
+========================================================
+INSTRUCTION SET SUMMARY
+========================================================
+
+  push I/F/B/S <val>   push literal value
+  pop                  discard top of stack
+  load <var>           push variable value
+  save <var>           pop into variable
+  label <n>            marks a jump target (no-op at runtime)
+  jmp <n>              unconditional jump to label n
+  fjmp <n>             pop bool; jump to label n if false
+  add I/F              pop b,a; push a+b
+  sub I/F              pop b,a; push a-b
+  mul I/F              pop b,a; push a*b
+  div I/F              pop b,a; push a/b
+  mod                  pop b,a (int); push a%b
+  uminus I/F           pop a; push -a
+  concat               pop b,a (string); push a+b
+  and                  pop b,a (bool); push a&&b
+  or                   pop b,a (bool); push a||b
+  not                  pop bool; push !a
+  lt I/F               pop b,a; push a<b
+  gt I/F               pop b,a; push a>b
+  eq I/F/S             pop b,a; push a==b
+  itof                 pop int; push as double
+  print <n>            pop n values (in order), print them, newline
+  read I/F/B/S         read one line from stdin, parse by type, push
+
+========================================================
+KEY DESIGN RULES (to understand the generated code)
+========================================================
+
+1. Stack discipline:
+   Every expression leaves exactly 1 value on the stack.
+   Every statement leaves the stack at the same depth as before.
+
+2. Assignment is an expression:
+   x = 5  ->  push 5 / save x / load x  (leaves x's value on stack)
+   When used as a statement, ExprStmt wraps it and adds "pop" at the end.
+
+3. Chained assignment (i=j=k=55):
+   Parsed right-to-left (right-associative).
+   k=55  saves 55, loads k -> stack has 55
+   j=(k=55) saves that 55 to j, loads j -> stack has 55
+   i=(j=...) saves to i, loads i -> stack has 55
+   ExprStmt pops the final 55.
+
+4. Labels are global integers, never reset.
+   Each if/while gets fresh label numbers via _labelCounter.
+
+5. Float promotion:
+   Whenever int meets float in arithmetic/relational: int is converted with itof.
+   Assignment of int to float variable also emits itof.
+
+6. Default values on declaration:
+   int=0, float=0.0, bool=false, string="".
+
+7. print vs write:
+   "write" in source = "print N" instruction where N = number of values.
+   All values go on stack first (left to right), then print N pops them in order.
+
+========================================================
+END OF LOGIC GUIDE
+========================================================

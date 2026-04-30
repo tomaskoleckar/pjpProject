@@ -28,16 +28,71 @@ public class TypeChecker
                 }
                 break;
 
+            case ArrayDeclStmt a:
+                if (_vars.ContainsKey(a.Name))
+                    _errors.Add($"Line {a.Line}: variable '{a.Name}' already declared");
+                else
+                    _vars[a.Name] = a.ElemType switch
+                    {
+                        VarType.Int    => VarType.IntArray,
+                        VarType.Float  => VarType.FloatArray,
+                        VarType.Bool   => VarType.BoolArray,
+                        VarType.String => VarType.StringArray,
+                        _ => throw new Exception($"Line {a.Line}: invalid array element type")
+                    };
+                break;
+
+            case FileDeclStmt f:
+                foreach (var name in f.Names)
+                {
+                    if (_vars.ContainsKey(name))
+                        _errors.Add($"Line {f.Line}: variable '{name}' already declared");
+                    else
+                        _vars[name] = VarType.File;
+                }
+                break;
+
+            case FopenStmt f:
+                if (!_vars.TryGetValue(f.VarName, out var ft))
+                    _errors.Add($"Line {f.Line}: undeclared variable '{f.VarName}'");
+                else if (ft != VarType.File)
+                    _errors.Add($"Line {f.Line}: '{f.VarName}' is not a file variable");
+                break;
+
+            case FileWriteStmt fw:
+                if (!_vars.TryGetValue(fw.VarName, out var fwt))
+                    _errors.Add($"Line {fw.Line}: undeclared variable '{fw.VarName}'");
+                else if (fwt != VarType.File)
+                    _errors.Add($"Line {fw.Line}: '{fw.VarName}' is not a file variable");
+                foreach (var e in fw.Values) InferType(e);
+                break;
+
+            case ArrayAssignStmt a:
+            {
+                if (!_vars.TryGetValue(a.Name, out var at))
+                {
+                    _errors.Add($"Line {a.Line}: undeclared variable '{a.Name}'");
+                    break;
+                }
+                var elem = ArrayElemType(at);
+                if (elem == null) { _errors.Add($"Line {a.Line}: '{a.Name}' is not an array"); break; }
+                var idxT = InferType(a.Index);
+                if (idxT != null && idxT != VarType.Int)
+                    _errors.Add($"Line {a.Line}: array index must be int");
+                var valT = InferType(a.Value);
+                if (valT != null && !Compatible(elem.Value, valT.Value, out _))
+                    _errors.Add($"Line {a.Line}: cannot store {valT} in {elem}[]");
+                break;
+            }
+
             case ExprStmt e:
                 InferType(e.Expr);
                 break;
 
             case ReadStmt r:
                 foreach (var name in r.Names)
-                {
                     if (!_vars.ContainsKey(name))
                         _errors.Add($"Line {r.Line}: undeclared variable '{name}'");
-                }
                 break;
 
             case WriteStmt w:
@@ -94,8 +149,7 @@ public class TypeChecker
                     return null;
                 }
                 var rType = InferType(a.Value);
-                if (rType == null) return lType;
-                if (!Compatible(lType, rType!.Value, out _))
+                if (rType != null && !Compatible(lType, rType.Value, out _))
                     _errors.Add($"Line {a.Line}: cannot assign {rType} to {lType}");
                 return lType;
             }
@@ -104,18 +158,32 @@ public class TypeChecker
             {
                 var t = InferType(u.Operand);
                 if (t == null) return null;
-                switch (u.Op)
+                if (u.Op == "-")
                 {
-                    case "-":
-                        if (t != VarType.Int && t != VarType.Float)
-                        { _errors.Add($"Line {u.Line}: unary '-' requires int or float"); return null; }
-                        return t;
-                    case "!":
-                        if (t != VarType.Bool)
-                        { _errors.Add($"Line {u.Line}: '!' requires bool"); return null; }
-                        return VarType.Bool;
+                    if (t != VarType.Int && t != VarType.Float)
+                    { _errors.Add($"Line {u.Line}: unary '-' requires int or float"); return null; }
+                    return t;
+                }
+                if (u.Op == "!")
+                {
+                    if (t != VarType.Bool)
+                    { _errors.Add($"Line {u.Line}: '!' requires bool"); return null; }
+                    return VarType.Bool;
                 }
                 return null;
+            }
+
+            case IndexExpr idx:
+            {
+                var targetType = InferType(idx.Target);
+                var indexType  = InferType(idx.Index);
+                if (targetType == null || indexType == null) return null;
+                if (indexType != VarType.Int)
+                    _errors.Add($"Line {idx.Line}: array index must be int");
+                var elem = ArrayElemType(targetType.Value);
+                if (elem == null)
+                    _errors.Add($"Line {idx.Line}: expression is not an array");
+                return elem;
             }
 
             case BinopExpr b:
@@ -136,7 +204,7 @@ public class TypeChecker
         {
             case "+": case "-": case "*": case "/":
                 if (l == VarType.Int && r == VarType.Int) return VarType.Int;
-                if (IsNumeric(l!.Value) && IsNumeric(r!.Value)) return VarType.Float;
+                if (IsNumeric(l.Value) && IsNumeric(r.Value)) return VarType.Float;
                 _errors.Add($"Line {b.Line}: operator '{b.Op}' requires int or float operands");
                 return null;
 
@@ -151,15 +219,14 @@ public class TypeChecker
                 return null;
 
             case "<": case ">":
-                if (IsNumeric(l!.Value) && IsNumeric(r!.Value)) return VarType.Bool;
+                if (IsNumeric(l.Value) && IsNumeric(r.Value)) return VarType.Bool;
                 _errors.Add($"Line {b.Line}: '{b.Op}' requires int or float operands");
                 return null;
 
             case "==": case "!=":
-                if ((IsNumeric(l!.Value) && IsNumeric(r!.Value)) || (l == r && l != VarType.Bool))
+                if ((IsNumeric(l.Value) && IsNumeric(r.Value)) || l == r)
                     return VarType.Bool;
-                if (l == r) return VarType.Bool; // bool == bool allowed? spec says x in {I,F,S}
-                _errors.Add($"Line {b.Line}: '{b.Op}' operands must be same type (int/float/string)");
+                _errors.Add($"Line {b.Line}: '{b.Op}' operands must be same type");
                 return null;
 
             case "&&": case "||":
@@ -169,6 +236,15 @@ public class TypeChecker
         }
         return null;
     }
+
+    public static VarType? ArrayElemType(VarType t) => t switch
+    {
+        VarType.IntArray    => VarType.Int,
+        VarType.FloatArray  => VarType.Float,
+        VarType.BoolArray   => VarType.Bool,
+        VarType.StringArray => VarType.String,
+        _                   => null
+    };
 
     private static bool IsNumeric(VarType t) => t is VarType.Int or VarType.Float;
 

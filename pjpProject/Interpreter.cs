@@ -4,6 +4,7 @@ public class Interpreter
 {
     private readonly Stack<object> _stack = new();
     private readonly Dictionary<string, object> _vars = new();
+    private readonly Dictionary<string, StreamWriter> _files = new();
     private readonly List<string> _instructions = new();
     private readonly Dictionary<int, int> _labels = new(); // label number -> instruction index
     private int _ip;
@@ -35,6 +36,9 @@ public class Interpreter
             Execute(_instructions[_ip], ref _ip, input, output);
             _ip++;
         }
+
+        foreach (var sw in _files.Values) sw.Close();
+        _files.Clear();
     }
 
     private void Execute(string instr, ref int ip, TextReader input, TextWriter output)
@@ -203,6 +207,67 @@ public class Interpreter
                     _   => throw new Exception($"Unknown read type {parts[1]}")
                 };
                 _stack.Push(val);
+                break;
+            }
+
+            case "anew":
+            {
+                // anew varName size typeCode
+                string arrName = parts[1];
+                int size       = int.Parse(parts[2]);
+                object def     = parts[3] switch
+                {
+                    "I" => (object)0,
+                    "F" => 0.0,
+                    "B" => false,
+                    "S" => "",
+                    _   => 0
+                };
+                var arr = new object[size];
+                Array.Fill(arr, def);
+                _vars[arrName] = arr;
+                break;
+            }
+
+            case "aload":
+            {
+                int idx    = (int)_stack.Pop();
+                var arr    = (object[])_vars[parts[1]];
+                if (idx < 0 || idx >= arr.Length)
+                    throw new Exception($"Array '{parts[1]}' index {idx} out of bounds (size {arr.Length})");
+                _stack.Push(arr[idx]);
+                break;
+            }
+
+            case "astore":
+            {
+                var val = _stack.Pop();
+                int idx = (int)_stack.Pop();
+                var arr = (object[])_vars[parts[1]];
+                if (idx < 0 || idx >= arr.Length)
+                    throw new Exception($"Array '{parts[1]}' index {idx} out of bounds (size {arr.Length})");
+                arr[idx] = val;
+                break;
+            }
+
+            case "fopen":
+            {
+                string varName = parts[1];
+                string path    = ParseString(parts[2]);
+                _files[varName] = new StreamWriter(path, append: false);
+                _vars[varName]  = path;
+                break;
+            }
+
+            case "fwrite":
+            {
+                string varName = parts[1];
+                int n          = int.Parse(parts[2]);
+                var vals       = new object[n];
+                for (int i = n - 1; i >= 0; i--) vals[i] = _stack.Pop();
+                if (!_files.TryGetValue(varName, out var sw))
+                    throw new Exception($"File '{varName}' is not open");
+                foreach (var v in vals) sw.Write(FormatValue(v));
                 break;
             }
 

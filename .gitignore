@@ -1,0 +1,10 @@
+# Claude Code
+.claude/
+
+# Build outputs
+**/bin/
+**/obj/
+
+# IDE
+.idea/
+*.user

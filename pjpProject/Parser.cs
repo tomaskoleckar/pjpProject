@@ -1,12 +1,12 @@
 namespace pjpProject;
 
-public class Parser
+public class LegacyParser
 {
     private readonly List<Token> _tokens;
     private int _pos;
     private readonly List<string> _errors = new();
 
-    public Parser(List<Token> tokens) => _tokens = tokens;
+    public LegacyParser(List<Token> tokens) => _tokens = tokens;
 
     public List<string> Errors => _errors;
 
@@ -56,6 +56,15 @@ public class Parser
                !Check(TokenType.RBrace)) Consume();
         if (Check(TokenType.Semi)) Consume();
     }
+    
+    private VarType MapToArrayType(VarType baseType, int line) => baseType switch
+    {
+        VarType.Int   => VarType.IntArray,
+        VarType.Float => VarType.FloatArray,
+        VarType.Bool => VarType.BoolArray,
+        VarType.String => VarType.StringArray,
+        _ => throw new Exception($"Line {line}: Type {baseType} cannot be an array.")
+    };
 
     private Stmt ParseStatement()
     {
@@ -66,6 +75,14 @@ public class Parser
         if (IsType(Current.Type))
         {
             var vtype = ParseType();
+            
+            if (Match(TokenType.LBracket))
+            {
+                Expect(TokenType.RBracket);
+                // Map to your new VarType.IntArray or similar
+                vtype = MapToArrayType(vtype, line); 
+            }
+            
             var names = new List<string> { Expect(TokenType.Id).Text };
             while (Match(TokenType.Comma)) names.Add(Expect(TokenType.Id).Text);
             Expect(TokenType.Semi);
@@ -274,7 +291,30 @@ public class Parser
         if (Check(TokenType.Id))
         {
             var t = Consume();
-            return new IdExpr(t.Text, line);
+            Expr node = new IdExpr(t.Text, line);
+            
+            while (true)
+            {
+                if (Match(TokenType.LBracket)) // Handle arr[i]
+                {
+                    var index = ParseExpr();
+                    Expect(TokenType.RBracket);
+                    node = new IndexExpr(node, index, line);
+                }
+                else if (Match(TokenType.LParen)) // Handle fopen(...)
+                {
+                    var args = new List<Expr>();
+                    if (!Check(TokenType.RParen))
+                    {
+                        args.Add(ParseExpr());
+                        while (Match(TokenType.Comma)) args.Add(ParseExpr());
+                    }
+                    Expect(TokenType.RParen);
+                    node = new IdExpr(t.Text, line); // legacy parser: call not supported
+                }
+                else break;
+            }
+            return node;
         }
         throw new Exception($"Line {line}: unexpected token '{Current.Text}'");
     }

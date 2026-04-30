@@ -29,14 +29,50 @@ public class CodeGen
                 {
                     switch (d.VType)
                     {
-                        case VarType.Int:    Emit($"push I 0");   break;
-                        case VarType.Float:  Emit($"push F 0.0"); break;
-                        case VarType.Bool:   Emit($"push B false"); break;
-                        case VarType.String: Emit("push S \"\""); break;
+                        case VarType.Int:    Emit("push I 0");     break;
+                        case VarType.Float:  Emit("push F 0.0");   break;
+                        case VarType.Bool:   Emit("push B false"); break;
+                        case VarType.String: Emit("push S \"\"");  break;
+                        case VarType.File:   Emit("push S \"\"");  break;
                     }
                     Emit($"save {name}");
                 }
                 break;
+
+            case ArrayDeclStmt a:
+            {
+                var tc = TypeCode(a.ElemType);
+                Emit($"anew {a.Name} {a.Size} {tc}");
+                break;
+            }
+
+            case FileDeclStmt f:
+                foreach (var name in f.Names)
+                {
+                    Emit("push S \"\"");
+                    Emit($"save {name}");
+                }
+                break;
+
+            case FopenStmt f:
+                Emit($"fopen {f.VarName} \"{f.FileName}\"");
+                break;
+
+            case FileWriteStmt fw:
+                foreach (var v in fw.Values) GenExpr(v);
+                Emit($"fwrite {fw.VarName} {fw.Values.Count}");
+                break;
+
+            case ArrayAssignStmt a:
+            {
+                GenExpr(a.Index);
+                GenExpr(a.Value);
+                var arrElem = TypeChecker.ArrayElemType(_tc.Variables[a.Name])!.Value;
+                var valType = _tc.InferType(a.Value);
+                if (valType == VarType.Int && arrElem == VarType.Float) Emit("itof");
+                Emit($"astore {a.Name}");
+                break;
+            }
 
             case ExprStmt e:
                 GenExpr(e.Expr);
@@ -100,6 +136,14 @@ public class CodeGen
             case StrLitExpr s:   Emit($"push S \"{s.Value}\""); break;
 
             case IdExpr id:      Emit($"load {id.Name}"); break;
+
+            case IndexExpr idx:
+            {
+                var arrName = ((IdExpr)idx.Target).Name;
+                GenExpr(idx.Index);
+                Emit($"aload {arrName}");
+                break;
+            }
 
             case AssignExpr a:
             {

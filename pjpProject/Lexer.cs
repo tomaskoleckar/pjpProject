@@ -5,7 +5,7 @@ public enum TokenType
     // types
     Int, Float, Bool, String,
     // keywords
-    Read, Write, If, Else, While,
+    Read, Write, If, Else, While, Fopen,
     // literals
     IntLit, FloatLit, BoolLit, StrLit,
     // identifier
@@ -16,19 +16,19 @@ public enum TokenType
     AndAnd, OrOr, Bang,
     Eq,
     // punctuation
-    LParen, RParen, LBrace, RBrace, Comma, Semi,
+    LParen, RParen, LBrace, RBrace, Comma, Semi, LBracket, RBracket,
     Eof
 }
 
 public record Token(TokenType Type, string Text, int Line);
 
-public class Lexer
+public class LegacyLexer
 {
     private readonly string _src;
     private int _pos;
     private int _line = 1;
 
-    public Lexer(string src) => _src = src;
+    public LegacyLexer(string src) => _src = src;
 
     private char Current => _pos < _src.Length ? _src[_pos] : '\0';
     private char Peek(int offset = 1) => (_pos + offset) < _src.Length ? _src[_pos + offset] : '\0';
@@ -124,6 +124,7 @@ public class Lexer
                 "while" => TokenType.While,
                 "true"  => TokenType.BoolLit,
                 "false" => TokenType.BoolLit,
+                "fopen"  => TokenType.Fopen,
                 _       => TokenType.Id
             };
             return new Token(tt, word, line);
@@ -148,6 +149,8 @@ public class Lexer
             '!' => new Token(TokenType.Bang,   "!", line),
             '(' => new Token(TokenType.LParen, "(", line),
             ')' => new Token(TokenType.RParen, ")", line),
+            '[' => new Token(TokenType.LBracket, "(", line),
+            ']' => new Token(TokenType.RBracket, ")", line),
             '{' => new Token(TokenType.LBrace, "{", line),
             '}' => new Token(TokenType.RBrace, "}", line),
             ',' => new Token(TokenType.Comma,  ",", line),

@@ -1,0 +1,6 @@
+file f;
+fopen f "output.txt";
+int x;
+x = 42;
+f << x << " hello " << 3.14;
+write "done";

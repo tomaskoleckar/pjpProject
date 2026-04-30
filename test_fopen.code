@@ -1,0 +1,15 @@
+push S ""
+save f
+fopen f "output.txt"
+push I 0
+save x
+push I 42
+save x
+load x
+pop
+load x
+push S " hello "
+push F 3.14
+fwrite f 3
+push S "done"
+print 1

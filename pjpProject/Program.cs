@@ -1,3 +1,4 @@
+using Antlr4.Runtime;
 using pjpProject;
 
 if (args.Length == 0)
@@ -18,24 +19,28 @@ if (args[0] == "--run")
 // compile mode
 string src = File.ReadAllText(args[0]);
 
-// 1. Lex
-var lexer = new Lexer(src);
-List<Token> tokens;
-try { tokens = lexer.Tokenize(); }
-catch (Exception ex)
+// 1. ANTLR lex + parse
+var inputStream  = new AntlrInputStream(src);
+var antlrLexer   = new LanguageLexer(inputStream);
+var tokenStream  = new CommonTokenStream(antlrLexer);
+var antlrParser  = new LanguageParser(tokenStream);
+
+var errors = new ErrorCollector();
+antlrLexer.RemoveErrorListeners();
+antlrLexer.AddErrorListener(errors);
+antlrParser.RemoveErrorListeners();
+antlrParser.AddErrorListener(errors);
+
+var tree = antlrParser.program();
+
+if (errors.Errors.Count > 0)
 {
-    Console.Error.WriteLine(ex.Message);
+    foreach (var e in errors.Errors) Console.Error.WriteLine(e);
     return 1;
 }
 
-// 2. Parse
-var parser = new Parser(tokens);
-var stmts = parser.Parse();
-if (parser.Errors.Count > 0)
-{
-    foreach (var e in parser.Errors) Console.Error.WriteLine(e);
-    return 1;
-}
+// 2. Build AST from parse tree
+var stmts = new AstBuilder().BuildProgram(tree);
 
 // 3. Type check
 var tc = new TypeChecker();

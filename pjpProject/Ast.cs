@@ -1,11 +1,16 @@
 namespace pjpProject;
 
-public enum VarType { Int, Float, Bool, String }
+public enum VarType { Int, Float, Bool, String, File, IntArray, FloatArray, BoolArray, StringArray }
 
 // Statements
 public abstract record Stmt(int Line);
 public record EmptyStmt(int Line) : Stmt(Line);
 public record DeclStmt(VarType VType, List<string> Names, int Line) : Stmt(Line);
+public record ArrayDeclStmt(VarType ElemType, int Size, string Name, int Line) : Stmt(Line);
+public record FileDeclStmt(List<string> Names, int Line) : Stmt(Line);
+public record FopenStmt(string VarName, string FileName, int Line) : Stmt(Line);
+public record FileWriteStmt(string VarName, List<Expr> Values, int Line) : Stmt(Line);
+public record ArrayAssignStmt(string Name, Expr Index, Expr Value, int Line) : Stmt(Line);
 public record ExprStmt(Expr Expr, int Line) : Stmt(Line);
 public record ReadStmt(List<string> Names, int Line) : Stmt(Line);
 public record WriteStmt(List<Expr> Exprs, int Line) : Stmt(Line);
@@ -23,3 +28,4 @@ public record IdExpr(string Name, int Line) : Expr(Line);
 public record AssignExpr(string Name, Expr Value, int Line) : Expr(Line);
 public record BinopExpr(string Op, Expr Left, Expr Right, int Line) : Expr(Line);
 public record UnopExpr(string Op, Expr Operand, int Line) : Expr(Line);
+public record IndexExpr(Expr Target, Expr Index, int Line) : Expr(Line);

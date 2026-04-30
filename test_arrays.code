@@ -1,0 +1,45 @@
+anew arr 5 I
+push I 0
+save i
+push I 0
+save i
+load i
+pop
+label 0
+load i
+push I 5
+lt I
+fjmp 1
+load i
+load i
+load i
+mul I
+astore arr
+load i
+push I 1
+add I
+save i
+load i
+pop
+jmp 0
+label 1
+push I 0
+save i
+load i
+pop
+label 2
+load i
+push I 5
+lt I
+fjmp 3
+load i
+aload arr
+print 1
+load i
+push I 1
+add I
+save i
+load i
+pop
+jmp 2
+label 3
