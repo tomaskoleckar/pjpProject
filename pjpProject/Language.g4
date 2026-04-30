@@ -16,13 +16,13 @@ statement
 type : INT | FLOAT | BOOL | STRING ;
 
 expr
-    : ID '=' expr                                           # assignExpr
-    | expr '||' expr                                        # orExpr
-    | expr '&&' expr                                        # andExpr
-    | expr ('==' | '!=') expr                               # eqExpr
-    | expr ('<' | '>') expr                                 # relExpr
+    : expr ('*' | '/' | '%') expr                           # mulExpr
     | expr ('+' | '-' | '.') expr                           # addExpr
-    | expr ('*' | '/' | '%') expr                           # mulExpr
+    | expr ('<' | '>') expr                                 # relExpr
+    | expr ('==' | '!=') expr                               # eqExpr
+    | expr '&&' expr                                        # andExpr
+    | expr '||' expr                                        # orExpr
+    | <assoc=right> expr '=' expr                           # assignExpr
     | '!' expr                                              # notExpr
     | '-' expr                                              # unaryMinusExpr
     | '(' expr ')'                                          # parenExpr

@@ -22,13 +22,13 @@ public enum TokenType
 
 public record Token(TokenType Type, string Text, int Line);
 
-public class Lexer
+public class LegacyLexer
 {
     private readonly string _src;
     private int _pos;
     private int _line = 1;
 
-    public Lexer(string src) => _src = src;
+    public LegacyLexer(string src) => _src = src;
 
     private char Current => _pos < _src.Length ? _src[_pos] : '\0';
     private char Peek(int offset = 1) => (_pos + offset) < _src.Length ? _src[_pos + offset] : '\0';

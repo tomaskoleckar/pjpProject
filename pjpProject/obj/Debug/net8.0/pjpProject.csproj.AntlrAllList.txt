@@ -1,0 +1,8 @@
+D:/RiderProjects/BachelorProjectApi/pjpProject/pjpProject/obj/Debug/net8.0/Language.interp
+D:/RiderProjects/BachelorProjectApi/pjpProject/pjpProject/obj/Debug/net8.0/Language.tokens
+D:/RiderProjects/BachelorProjectApi/pjpProject/pjpProject/obj/Debug/net8.0/LanguageBaseVisitor.cs
+D:/RiderProjects/BachelorProjectApi/pjpProject/pjpProject/obj/Debug/net8.0/LanguageLexer.cs
+D:/RiderProjects/BachelorProjectApi/pjpProject/pjpProject/obj/Debug/net8.0/LanguageLexer.interp
+D:/RiderProjects/BachelorProjectApi/pjpProject/pjpProject/obj/Debug/net8.0/LanguageLexer.tokens
+D:/RiderProjects/BachelorProjectApi/pjpProject/pjpProject/obj/Debug/net8.0/LanguageParser.cs
+D:/RiderProjects/BachelorProjectApi/pjpProject/pjpProject/obj/Debug/net8.0/LanguageVisitor.cs

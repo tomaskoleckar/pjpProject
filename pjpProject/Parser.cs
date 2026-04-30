@@ -1,12 +1,12 @@
 namespace pjpProject;
 
-public class Parser
+public class LegacyParser
 {
     private readonly List<Token> _tokens;
     private int _pos;
     private readonly List<string> _errors = new();
 
-    public Parser(List<Token> tokens) => _tokens = tokens;
+    public LegacyParser(List<Token> tokens) => _tokens = tokens;
 
     public List<string> Errors => _errors;
 
